@@ -19,20 +19,6 @@ struct sensor_chan_spec gyro_chan = { SENSOR_CHAN_GYRO_XYZ, 0 };
 K_THREAD_STACK_DEFINE(thread_stack, TASK_STACK_SIZE);
 static struct k_thread thread_id;
 
-static inline void temp_raw_to_c(int32_t in, int32_t *out_c, uint32_t *out_uc)
-{
-	int64_t sensitivity = 13248; /* value equivalent for x100 1c */
-
-	/* Offset by 25 degrees Celsius */
-	int64_t in100 = (in * 100) + (25 * sensitivity);
-
-	/* Whole celsius */
-	*out_c = in100 / sensitivity;
-
-	/* Micro celsius */
-	*out_uc = ((in100 - (*out_c) * sensitivity) * INT64_C(1000000)) / sensitivity;
-}
-
 static void print_stream(void *p1, void *p2, void *p3) {
     const struct device *dev = (const struct device *)p1;
     struct rtio_iodev *iodev  = (struct rtio_iodev *)p2;
@@ -108,14 +94,8 @@ static void print_stream(void *p1, void *p2, void *p3) {
 
             for (int k = 0; k < c; k++) {
                 int32_t rawVal = ldexp((float)temp_data->readings[k].value, temp_data->shift - 31);
-                int32_t outC;
-                int32_t outUc;
 
-                temp_raw_to_c(rawVal, &outC, &outUc);
-                printk("Temp: %d\n", outUc);
-
-            	printk("TEMP data for %s %lluns (%" PRIq(6) ")\n", dev->name,
-            	       PRIsensor_q31_data_arg(*temp_data, k));
+                printk("Temp: %d\n", rawVal);
             }
             i += c;
 

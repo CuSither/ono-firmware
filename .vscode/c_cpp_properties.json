@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${default}",
+                "${workspaceFolder}/src/**",
+                "${workspaceFolder}/build/**",
+                "/opt/nordic/ncs/v3.0.2/zephyr/include",
+                "/opt/nordic/ncs/v3.0.2/zephyr/**"
+            ],
+            "defines": [],
+            "intelliSenseMode": "macos-clang-arm64",
+            "configurationProvider": "nRF"
+        }
+    ],
+    "version": 4
+}

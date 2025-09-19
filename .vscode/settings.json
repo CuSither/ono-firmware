@@ -1,0 +1,31 @@
+{
+    "files.associations": {
+        "__bit_reference": "c",
+        "__node_handle": "c",
+        "bitset": "c",
+        "deque": "c",
+        "limits": "c",
+        "optional": "c",
+        "ratio": "c",
+        "tuple": "c",
+        "vector": "c",
+        "system_error": "c",
+        "array": "c",
+        "functional": "c",
+        "type_traits": "c",
+        "utility": "c",
+        "variant": "c",
+        "kernel.h": "c",
+        "kernel_includes.h": "c",
+        "syscall.h": "c",
+        "spinlock.h": "c",
+        "arch.h": "c",
+        "sensor.h": "c",
+        "drv2605.h": "c",
+        "pmic.h": "c",
+        "imu.h": "c",
+        "npm1300.h": "c",
+        "gpio.h": "c",
+        "haptics.h": "c"
+    }
+}

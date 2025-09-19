@@ -1,0 +1,22 @@
+manifest:
+  remotes:
+    - name: nrf
+      url-base: https://github.com/nrfconnect
+    - name: you
+      url-base: https://github.com/CuSither/sdk-zephyr-ono
+
+  projects:
+    # Pull the standard NCS bundle at v3.0.2
+    - name: sdk-nrf
+      remote: nrf
+      revision: v3.0.2
+      import: true
+
+    # OVERRIDE the Zephyr project to use your fork & branch
+    - name: zephyr
+      remote: you
+      repo-path: /Users/alex/sdk-zephyr
+      revision: fix/spi-rtio-trans-op
+
+  self:
+    path: app

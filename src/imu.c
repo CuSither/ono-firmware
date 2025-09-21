@@ -92,29 +92,29 @@ static void print_stream(void *p1, void *p2, void *p3) {
 
             c = decoder->decode(buf, temp_chan, &temp_fit, 16, temp_data);
 
-            for (int k = 0; k < c; k++) {
-                int32_t rawVal = ldexp((float)temp_data->readings[k].value, temp_data->shift - 31);
+            // for (int k = 0; k < c; k++) {
+            //     int32_t rawVal = ldexp((float)temp_data->readings[k].value, temp_data->shift - 31);
 
-                printk("Temp: %d\n", rawVal);
-            }
+            //     printk("Temp: %d\n", rawVal);
+            // }
             i += c;
 
             c = decoder->decode(buf, accel_chan, &accel_fit, 16, accel_data);
 
-            for (int k = 0; k < c; k++) {
-            	printk("XL data for %s %lluns (%" PRIq(6) ", %" PRIq(6)
-            	       ", %" PRIq(6) ")\n", dev->name,
-            	       PRIsensor_three_axis_data_arg(*accel_data, k));
-            }
+            // for (int k = 0; k < c; k++) {
+            // 	printk("XL data for %s %lluns (%" PRIq(6) ", %" PRIq(6)
+            // 	       ", %" PRIq(6) ")\n", dev->name,
+            // 	       PRIsensor_three_axis_data_arg(*accel_data, k));
+            // }
             i += c;
             
             c = decoder->decode(buf, gyro_chan, &gyro_fit, 16, gyro_data);
 
-            for (int k = 0; k < c; k++) {
-            	printk("GY data for %s %lluns (%" PRIq(6) ", %" PRIq(6)
-            	       ", %" PRIq(6) ")\n", dev->name,
-            	       PRIsensor_three_axis_data_arg(*gyro_data, k));
-            }
+            // for (int k = 0; k < c; k++) {
+            // 	printk("GY data for %s %lluns (%" PRIq(6) ", %" PRIq(6)
+            // 	       ", %" PRIq(6) ")\n", dev->name,
+            // 	       PRIsensor_three_axis_data_arg(*gyro_data, k));
+            // }
             i += c;
         }
 

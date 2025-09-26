@@ -14,10 +14,77 @@ struct bt_conn *current_conn = NULL;
 
 static struct k_work adv_work;
 
+#define MSGQ_DEPTH      16
+#define PACKET_SIZE     20
+
+K_MEM_SLAB_DEFINE(pkt_slab, PACKET_SIZE, MSGQ_DEPTH, 4);
+K_MSGQ_DEFINE(tx_q, PACKET_SIZE, MSGQ_DEPTH, 4);
+
+static void notify_done(struct bt_conn *conn, void *user_data) {
+    k_mem_slab_free(&pkt_slab, user_data);
+}
+
+static void clear_mem_slab() {
+    void* p;
+
+    while (k_msgq_get(&tx_q, &p, K_NO_WAIT) == 0) {
+        // printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
+        k_mem_slab_free(&pkt_slab, p);
+    }
+}
+
+static void tx_worker(void *d0, void *d1, void *d2) {
+    while (1) {
+        void *p;
+        int err = k_msgq_get(&tx_q, &p, K_FOREVER);
+
+        printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
+
+        static struct bt_gatt_notify_params params;
+
+        memset(&params, 0, sizeof(params));
+        params.attr  = &ono_svc.attrs[IMU_SVC_IDX_MEAS_VAL];
+        params.data  = p;
+        params.len   = PACKET_SIZE;
+        params.func  = notify_done;
+        params.user_data = p;
+
+        err = bt_gatt_notify_cb(current_conn, &params);
+        if (err) {
+            printk("gatt notify failed: %d\n", err);
+            k_mem_slab_free(&pkt_slab, p);
+            k_msgq_put(&tx_q, &p, K_NO_WAIT);
+        }
+    }
+
+    return;
+}
+
+K_THREAD_DEFINE(bt_worker_tid, 1024, tx_worker, NULL, NULL, NULL, -10, 0, 0);
+
+void push_packet_to_queue(void* sensor_data) {
+    if (!notify_enabled || !current_conn) return;
+
+    void *p;
+    int err = k_mem_slab_alloc(&pkt_slab, (void **)&p, K_NO_WAIT);
+    if (err != 0) {
+        printk("Message queue slab is full, clearing queue\n");
+        // k_work_submit(&clear_work);
+        clear_mem_slab();
+        return;
+    }
+
+    memcpy(p, sensor_data, PACKET_SIZE);
+
+    if (k_msgq_put(&tx_q, &p, K_NO_WAIT) != 0) {
+        printk("Message queue is full!\n");
+        k_mem_slab_free(&pkt_slab, (void *)p);
+        return;
+    }
+}
 
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {
     notify_enabled = (value & BT_GATT_CCC_NOTIFY) != 0;
-    // notify_enabled = true;
 }
 
 BT_GATT_SERVICE_DEFINE(ono_svc,
@@ -27,16 +94,6 @@ BT_GATT_SERVICE_DEFINE(ono_svc,
 	BT_GATT_CCC(ccc_cfg_changed,
 		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
-
-// void imu_notify(const void *s, uint16_t len)
-// {
-//     if (notify_enabled) {
-//         int ret = bt_gatt_notify(NULL, &ono_svc.attrs[IMU_SVC_IDX_MEAS_VAL], s, len);
-//         if (ret) {
-//             printk("Notify failed!!\n");
-//         }
-//     }
-// }
 
 static const struct bt_data ad[] = {
     BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -79,8 +136,7 @@ static void advertising_start(void) {
 	k_work_submit(&adv_work);
 }
 
-static void recycled_cb(void)
-{
+static void recycled_cb(void) {
 	LOG_INF("Connection object available from previous conn. Disconnect is complete!");
 	advertising_start();
 }
@@ -103,8 +159,6 @@ static void adv_work_handler(struct k_work *work)
 	LOG_INF("Advertising successfully started");
 }
 
-
-
 void ble_init() {
     int err = bt_enable(NULL);
     if (err) {
@@ -114,13 +168,4 @@ void ble_init() {
 
     k_work_init(&adv_work, adv_work_handler);
     advertising_start();
-
-
-    // err = bt_le_adv_start(BT_LE_ADV_CONN, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
-    // if (err) {
-    //     printk("Advertising failed to start (%d)\n", err);
-    //     return;
-    // }
-
-    // printk("Advertising as peripheral, service in AD\n");
 }

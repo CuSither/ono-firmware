@@ -11,16 +11,9 @@ SENSOR_DT_STREAM_IODEV(iodev, STREAMDEV_ALIAS,
 /* ToDo: Calculate how much memory is actually needed */
 RTIO_DEFINE_WITH_MEMPOOL(stream_ctx, 4, 4, 128, 16, 4);
 
-struct sensor_chan_spec temp_chan = { SENSOR_CHAN_DIE_TEMP, 0 };
-struct sensor_chan_spec accel_chan = { SENSOR_CHAN_ACCEL_XYZ, 0 };
-struct sensor_chan_spec gyro_chan = { SENSOR_CHAN_GYRO_XYZ, 0 };
-
-// #define TASK_STACK_SIZE           8192ul
-// K_THREAD_STACK_DEFINE(thread_stack, TASK_STACK_SIZE);
-// static struct k_thread thread_id;
-
 void (*ble_transmit_cb)(struct sensor_packet*);
 
+/* ToDo: Consider whether it's necessary to include all of these structs */
 struct __packed icm42688_packet {
     uint8_t header;
 
@@ -53,7 +46,6 @@ struct icm42688_fifo_data {
 	uint16_t fifo_count: 11;
 	uint16_t reserved: 5;
 } __attribute__((__packed__));
-
 
 
 static void stream_data(void *p1, void *p2, void *p3) {

@@ -27,4 +27,4 @@ extern const struct bt_gatt_service_static ono_svc;
 
 void ble_init();
 
-void imu_notify(const void *s, uint16_t len);
+void push_packet_to_queue(void* sensor_data);

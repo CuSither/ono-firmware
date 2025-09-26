@@ -14,7 +14,7 @@ struct bt_conn *current_conn = NULL;
 
 static struct k_work adv_work;
 
-#define MSGQ_DEPTH      16
+#define MSGQ_DEPTH      32
 #define PACKET_SIZE     20
 
 K_MEM_SLAB_DEFINE(pkt_slab, PACKET_SIZE, MSGQ_DEPTH, 4);
@@ -26,12 +26,8 @@ static void notify_done(struct bt_conn *conn, void *user_data) {
 
 static void clear_mem_slab() {
     void* p;
-    int counter = 0;
 
     while (k_msgq_get(&tx_q, &p, K_NO_WAIT) == 0) {
-        // printk("count: %d\n", counter);
-        // counter++;
-        // printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
         k_mem_slab_free(&pkt_slab, p);
     }
 }
@@ -56,10 +52,8 @@ static void tx_worker(void *d0, void *d1, void *d2) {
 
         err = bt_gatt_notify_cb(current_conn, &params);
         if (err) {
-            printk("gatt notify failed: %d\n", err);
+            LOG_INF("Gatt notify failed: %d", err);
             k_mem_slab_free(&pkt_slab, p);
-            clear_mem_slab();
-            // k_msgq_put(&tx_q, &p, K_NO_WAIT);
         }
     }
 
@@ -71,13 +65,12 @@ K_THREAD_DEFINE(bt_worker_tid, 4096, tx_worker, NULL, NULL, NULL, -5, 0, 1000);
 void push_packet_to_queue(void* sensor_data) {
     if (!notify_enabled || !current_conn) return;
 
-    printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
+    LOG_DBG("num slab allocations: %d", k_mem_slab_num_used_get(&pkt_slab));
 
     void *p;
     int err = k_mem_slab_alloc(&pkt_slab, (void **)&p, K_NO_WAIT);
     if (err != 0) {
-        printk("Message queue slab is full, clearing queue\n");
-        // k_work_submit(&clear_work);
+        LOG_INF("Message queue slab is full, clearing queue");
         clear_mem_slab();
         return;
     }
@@ -85,7 +78,7 @@ void push_packet_to_queue(void* sensor_data) {
     memcpy(p, sensor_data, PACKET_SIZE);
 
     if (k_msgq_put(&tx_q, &p, K_NO_WAIT) != 0) {
-        printk("Message queue is full!\n");
+        LOG_ERR("Message queue is full");
         k_mem_slab_free(&pkt_slab, (void *)p);
         return;
     }
@@ -125,6 +118,11 @@ static void connected(struct bt_conn *conn, uint8_t err) {
 	LOG_INF("Connected %s", addr);
 
 	current_conn = bt_conn_ref(conn);
+
+    err = bt_conn_le_phy_update(current_conn, BT_CONN_LE_PHY_PARAM_2M);
+    if (err) {
+        LOG_ERR("Phy update request failed: %d",  err);
+    }
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason) {
@@ -170,7 +168,7 @@ static void adv_work_handler(struct k_work *work)
 void ble_init() {
     int err = bt_enable(NULL);
     if (err) {
-        printk("bt_enable failed (%d)\n", err);
+        LOG_ERR("bt_enable failed (%d)", err);
         return;
     }
 

@@ -18,7 +18,7 @@ static struct k_work adv_work;
 #define PACKET_SIZE     20
 
 K_MEM_SLAB_DEFINE(pkt_slab, PACKET_SIZE, MSGQ_DEPTH, 4);
-K_MSGQ_DEFINE(tx_q, PACKET_SIZE, MSGQ_DEPTH, 4);
+K_MSGQ_DEFINE(tx_q, sizeof(void*), MSGQ_DEPTH, 4);
 
 static void notify_done(struct bt_conn *conn, void *user_data) {
     k_mem_slab_free(&pkt_slab, user_data);
@@ -26,8 +26,11 @@ static void notify_done(struct bt_conn *conn, void *user_data) {
 
 static void clear_mem_slab() {
     void* p;
+    int counter = 0;
 
     while (k_msgq_get(&tx_q, &p, K_NO_WAIT) == 0) {
+        // printk("count: %d\n", counter);
+        // counter++;
         // printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
         k_mem_slab_free(&pkt_slab, p);
     }
@@ -35,10 +38,12 @@ static void clear_mem_slab() {
 
 static void tx_worker(void *d0, void *d1, void *d2) {
     while (1) {
+        if (!current_conn || !notify_enabled) {
+            k_msleep(500);
+            continue;
+        }
         void *p;
         int err = k_msgq_get(&tx_q, &p, K_FOREVER);
-
-        printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
 
         static struct bt_gatt_notify_params params;
 
@@ -53,17 +58,20 @@ static void tx_worker(void *d0, void *d1, void *d2) {
         if (err) {
             printk("gatt notify failed: %d\n", err);
             k_mem_slab_free(&pkt_slab, p);
-            k_msgq_put(&tx_q, &p, K_NO_WAIT);
+            clear_mem_slab();
+            // k_msgq_put(&tx_q, &p, K_NO_WAIT);
         }
     }
 
     return;
 }
 
-K_THREAD_DEFINE(bt_worker_tid, 1024, tx_worker, NULL, NULL, NULL, -10, 0, 0);
+K_THREAD_DEFINE(bt_worker_tid, 4096, tx_worker, NULL, NULL, NULL, -5, 0, 1000);
 
 void push_packet_to_queue(void* sensor_data) {
     if (!notify_enabled || !current_conn) return;
+
+    printk("Num submissions: %d\n", k_mem_slab_num_used_get(&pkt_slab));
 
     void *p;
     int err = k_mem_slab_alloc(&pkt_slab, (void **)&p, K_NO_WAIT);

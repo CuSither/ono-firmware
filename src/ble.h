@@ -1,6 +1,8 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/bluetooth/hci.h>
 
 struct __packed imu_sample_v1 {
     uint8_t  ver;
@@ -11,6 +13,18 @@ struct __packed imu_sample_v1 {
     int16_t  gx, gy, gz;
 };
 
+extern bool notify_enabled;
+extern struct bt_conn *current_conn;
+
+enum {
+    IMU_SVC_IDX_PRIMARY,
+    IMU_SVC_IDX_MEAS_CHRC,
+    IMU_SVC_IDX_MEAS_VAL,
+    IMU_SVC_IDX_MEAS_CCC,
+};
+
+extern const struct bt_gatt_service_static ono_svc;
+
 void ble_init();
 
-void imu_notify(const struct imu_sample_v1 *s);
+void imu_notify(const void *s, uint16_t len);

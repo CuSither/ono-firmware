@@ -6,6 +6,7 @@
 #include <arm_math_types.h>
 #include <arm_math.h>
 #include <math.h>
+#include "Fusion.h"
 
 #include <zephyr/sys/byteorder.h>
 

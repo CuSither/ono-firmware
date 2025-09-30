@@ -31,10 +31,6 @@ const FusionMatrix gyroscopeMisalignment = {-0.92624318, -0.35990648, -0.1119861
 const FusionVector gyroscopeSensitivity = {1.0f, 1.0f, 1.0f};
 const FusionVector gyroscopeOffset = {0.0f, 0.0f, 0.0f};
 
-ATOMIC_INIT(callibrating);
-float calSumX, calSumY, calSumZ;
-int calCount;
-
 /* ToDo: Consider whether it's necessary to include all of these structs */
 struct __packed icm42688_packet {
     uint8_t header;
@@ -223,97 +219,24 @@ static void stream_data(void *p1, void *p2, void *p3) {
         // arm_mean_q15(gz_buf, fifo_count, &gz_mean);
 
 
-        if (atomic_test_bit(callibrating, 0)) {
-            calSumX += xMean;
-            calSumY += yMean;
-            calSumZ += zMean;
-            calCount++;
+        struct sensor_packet s_pkt = {
+            .v = 1,
+            .flags = 0,
+            .time_stamp_ns = pkt_ts,
+            .temp = pkt_temp,
+            .aX = xMean,
+            .aY = yMean,
+            .aZ = zVel,
+            .gX = gx_mean,
+            .gY = gy_mean,
+            .gZ = gz_mean,
+        };
 
-        } else {
-            struct sensor_packet s_pkt = {
-                .v = 1,
-                .flags = 0,
-                .time_stamp_ns = pkt_ts,
-                .temp = pkt_temp,
-                .aX = xMean,
-                .aY = yMean,
-                .aZ = zVel,
-                .gX = gx_mean,
-                .gY = gy_mean,
-                .gZ = gz_mean,
-            };
-
-            ble_transmit_cb(&s_pkt);
-        }
+        ble_transmit_cb(&s_pkt);
+        
 
         rtio_release_buffer(&stream_ctx, buf, buf_len);
     }
-}
-
-static arm_matrix_instance_f32 least_squares(arm_matrix_instance_f32 A, arm_matrix_instance_f32 b, int numColumns, int numRows) {
-    arm_matrix_instance_f32 AT;
-    arm_matrix_instance_f32 ATMA;
-    arm_matrix_instance_f32 ATMAI;
-    arm_matrix_instance_f32 x;
-
-    
-}
-
-static void callibrate() {
-    int numSamples = 20;
-    float32_t SAMPLES_f32[3*numSamples];
-    float32_t D_f32[9*numSamples];
-    arm_matrix_instance_f32 SAMPLES;
-    arm_matrix_instance_f32 D;
-
-
-    for (int i = 0; i < numSamples; i++) {
-        calSumX = 0;
-        calSumY = 0;
-        calSumZ = 0;
-        calCount = 0;
-
-        printk("Taking sample %d\n", i+1);
-
-        for (int j = 5; j > 0; j--) {
-            printk("Starting to sample in... %d\n");
-            k_msleep(1000);
-        }
-
-        /* Is this a robust enough way to prevent race conditions? */
-        atomic_set_bit(callibrating, 0);
-        m_sleep(5000);
-        atomic_clear_bit(callibrating, 0);
-
-        printk("Finished sampling\n");
-
-        float mX = calSumX / (float)calCount;
-        float mY = calSumY / (float)calCount;
-        float mZ = calSumZ / (float)calCount;
-
-        printk("Sample value is {%.4f, %.4f, %.4f}\n", mX, mY, mZ);
-        SAMPLES_f32[i*3] = mX;
-        SAMPLES_f32[i*3+1] = mY;
-        SAMPLES_f32[i*3+2] = mZ;
-
-        D_f32[i*9] = mX * mX;
-        D_f32[i*9+1] = mY * mY;
-        D_f32[i*9+2] = mZ * mZ;
-        D_f32[i*9+3] = 2.0 * mX * mY;
-        D_f32[i*9+4] = 2.0 * mX * mZ;
-        D_f32[i*9+5] = 2.0 * mY * mZ;
-        D_f32[i*9+6] = 2.0 * mX;
-        D_f32[i*9+7] = 2.0 * mY;
-        D_f32[i*9+8] = 2.0 * mZ;
-    }
-
-    arm_mat_init_f32(&SAMPLES, numSamples, 3, (float32_t *)SAMPLES_f32);
-    arm_mat_init_f32(&D, numSamples, 9, (float32_t *)D_f32);
-
-
-    
-
-
 }
 
 K_THREAD_DEFINE(imu_producer_tid, 4096, stream_data, (void *)imu, (void *)(&iodev), NULL, K_PRIO_COOP(5), K_INHERIT_PERMS, 0);
@@ -350,8 +273,6 @@ int imu_init(void (*transmit_cb)(struct sensor_packet*)) {
 
     // k_thread_create(&thread_id, thread_stack, TASK_STACK_SIZE, stream_data, (void *)imu, (void *)(&iodev), NULL, K_PRIO_COOP(5), K_INHERIT_PERMS, K_FOREVER);
     k_thread_start(imu_producer_tid);
-
-    callibrate();
 
 
     return 0;

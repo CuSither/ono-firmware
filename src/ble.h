@@ -21,6 +21,9 @@ enum {
     IMU_SVC_IDX_MEAS_CHRC,
     IMU_SVC_IDX_MEAS_VAL,
     IMU_SVC_IDX_MEAS_CCC,
+    CAL_SVC_IDX_MEAS_CHRC,
+    CAL_SVC_IDX_MEAS_VAL,
+    CAL_SVC_IDX_MEAS_CCC,
 };
 
 extern const struct bt_gatt_service_static ono_svc;

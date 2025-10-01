@@ -3,8 +3,6 @@
 #include <zephyr/kernel/thread_stack.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/rtio/rtio.h>
-#include <arm_math_types.h>
-#include <arm_math.h>
 #include <math.h>
 #include "Fusion.h"
 
@@ -19,5 +17,14 @@ struct __packed sensor_packet {
     int16_t gX, gY, gZ;
 };
 
+struct __packed cal_data_packet {
+    uint8_t v;
+    uint8_t flags;
+    float ax, ay, az;
+    uint8_t filler[6];
+};
+
 int imu_init(void (*transmit_cb)(struct sensor_packet*));
+void start_callibration();
+void feed_callibration_data(void* buff, uint16_t len);
 int imu_start_streaming();

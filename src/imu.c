@@ -11,7 +11,11 @@ SENSOR_DT_STREAM_IODEV(iodev, STREAMDEV_ALIAS,
 /* ToDo: Calculate how much memory is actually needed */
 RTIO_DEFINE_WITH_MEMPOOL(stream_ctx, 4, 4, 128, 16, 4);
 
-void (*ble_transmit_cb)(struct sensor_packet*);
+/* Must be power of 2 */
+#define BLE_RATE 64
+#define TICKS_PER_SEC 32768
+
+void (*ble_transmit_cb)(void*);
 
 static FusionAhrs ahrs;
 static FusionOffset offset;
@@ -23,13 +27,20 @@ static uint16_t prev_timestamp = 0;
 static float zVel = 0;
 int counter = 0;
 
-const FusionMatrix accelerometerMisalignment = {-0.92624318, -0.35990648, -0.11198617, -0.31824553, 0.58752912, 0.74399551, -0.20197367, 0.72475986, -0.65873347};
-const FusionVector accelerometerSensitivity = {1.00257195, 1.00059062, 0.99902027};
-const FusionVector accelerometerOffset = {0.00194573, -0.00187991, 0.00601532};
+int write_counter = 0;
 
-const FusionMatrix gyroscopeMisalignment = {-0.92624318, -0.35990648, -0.11198617, -0.31824553, 0.58752912, 0.74399551, -0.20197367, 0.72475986, -0.65873347};
-const FusionVector gyroscopeSensitivity = {1.0f, 1.0f, 1.0f};
-const FusionVector gyroscopeOffset = {0.0f, 0.0f, 0.0f};
+#define CAL_TIME_SEC 2
+static bool callibrating = false;
+float calSumX, calSumY, calSumZ;
+int calCounter;
+
+FusionMatrix accelerometerMisalignment; // = {-0.92624318, -0.35990648, -0.11198617, -0.31824553, 0.58752912, 0.74399551, -0.20197367, 0.72475986, -0.65873347};
+FusionVector accelerometerSensitivity; //{1.00257195, 1.00059062, 0.99902027};
+FusionVector accelerometerOffset; // {0.00194573, -0.00187991, 0.00601532};
+
+// FusionMatrix gyroscopeMisalignment;
+FusionVector gyroscopeSensitivity = {1.0f, 1.0f, 1.0f};
+FusionVector gyroscopeOffset = {0.0f, 0.0f, 0.0f};
 
 /* ToDo: Consider whether it's necessary to include all of these structs */
 struct __packed icm42688_packet {
@@ -65,6 +76,52 @@ struct icm42688_fifo_data {
 	uint16_t reserved: 5;
 } __attribute__((__packed__));
 
+void start_callibration() {
+    if (callibrating) {
+        printk("Callibration has already started\n");
+        return;
+    }
+
+    printk("Starting callibration\n");
+    calSumX = 0;
+    calSumY = 0;
+    calSumZ = 0;
+    calCounter = 0;
+    callibrating = true;
+}
+
+void feed_callibration_data(void* buff, uint16_t len) {
+    int num_floats = len / sizeof(float);
+    float* buff_f = (float*)buff;
+
+    for (int i = 0; i < num_floats; i++) {
+        if (write_counter < 9) {
+            accelerometerMisalignment.array[write_counter/3][write_counter%3] = buff_f[i];
+        } else if (write_counter < 12) {
+            int idx = write_counter - 9;
+            accelerometerSensitivity.array[idx] = buff_f[i];
+        } else if (write_counter < 15) {
+            int idx = write_counter - 12;
+            accelerometerOffset.array[idx] = buff_f[i];
+        }
+
+        write_counter++;
+    }
+
+    if (write_counter == 15) {
+
+    printk("M: \n");
+        for (int i = 0; i < 3; i++) {
+            printk("%.5f, %.5f, %.5f\n", accelerometerMisalignment.array[i][0], accelerometerMisalignment.array[i][1], accelerometerMisalignment.array[i][2]);
+        }
+
+        printk("S: \n");
+        printk("%.5f, %.5f, %.5f\n", accelerometerSensitivity.array[0], accelerometerSensitivity.array[1], accelerometerSensitivity.array[2]);
+
+        printk("b: \n");
+        printk("%.5f, %.5f, %.5f\n", accelerometerOffset.array[0], accelerometerOffset.array[1], accelerometerOffset.array[2]);
+    }
+}
 
 static void stream_data(void *p1, void *p2, void *p3) {
     // const struct device *dev = (const struct device *)p1;
@@ -153,43 +210,45 @@ static void stream_data(void *p1, void *p2, void *p3) {
             float gyVal = ldexp((float)(gy*1000), -15);
             float gzVal = ldexp((float)(gz*1000), -15);
 
-            uint16_t ts = ((buf_ptr[0xe] << 8) | buf_ptr[0xf]);
-            uint16_t td;
+            if (!callibrating) {
+                uint16_t ts = ((buf_ptr[0xe] << 8) | buf_ptr[0xf]);
+                uint16_t td;
 
-            if (ts < prev_timestamp) {
-                td = ts + (UINT16_MAX - prev_timestamp);
-            } else {
-                td = ts - prev_timestamp;
-            }
+                if (ts < prev_timestamp) {
+                    td = ts + (UINT16_MAX - prev_timestamp);
+                } else {
+                    td = ts - prev_timestamp;
+                }
 
-            prev_timestamp = ts;
+                prev_timestamp = ts;
 
-            float td_sec = (float)td / 1000000.0f * (float)time_scaling;
+                float td_sec = (float)td / 1000000.0f * (float)time_scaling;
 
-            FusionVector gyroscope = {gxVal, gyVal, gzVal};
-            FusionVector accelerometer = {axVal, ayVal, azVal};
+                FusionVector gyroscope = {gxVal, gyVal, gzVal};
+                FusionVector accelerometer = {axVal, ayVal, azVal};
 
-            gyroscope = FusionCalibrationInertial(gyroscope, gyroscopeMisalignment, gyroscopeSensitivity, gyroscopeOffset);
-            accelerometer = FusionCalibrationInertial(accelerometer, accelerometerMisalignment, accelerometerSensitivity, accelerometerOffset);
+                gyroscope = FusionCalibrationInertial(gyroscope, accelerometerMisalignment, gyroscopeSensitivity, gyroscopeOffset);
+                accelerometer = FusionCalibrationInertial(accelerometer, accelerometerMisalignment, accelerometerSensitivity, accelerometerOffset);
 
-            gyroscope = FusionOffsetUpdate(&offset, gyroscope);
+                gyroscope = FusionOffsetUpdate(&offset, gyroscope);
 
-            FusionAhrsUpdateNoMagnetometer(&ahrs, gyroscope, accelerometer, td_sec);
+                FusionAhrsUpdateNoMagnetometer(&ahrs, gyroscope, accelerometer, td_sec);
 
-            // printk("%.5f, %.5f, %.5f\n", accelerometer.axis.x, accelerometer.axis.y, accelerometer.axis.z);
+                // printk("%.5f, %.5f, %.5f\n", accelerometer.axis.x, accelerometer.axis.y, accelerometer.axis.z);
 
-            const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
-            // const FusionVector linear = FusionAhrsGetLinearAcceleration(&ahrs);
+                const FusionVector earth = FusionAhrsGetEarthAcceleration(&ahrs);
+                // const FusionVector linear = FusionAhrsGetLinearAcceleration(&ahrs);
 
-            // xSum += earth.axis.x;
-            // ySum += earth.axis.y;
-            // zSum += earth.axis.z;
+                // xSum += earth.axis.x;
+                // ySum += earth.axis.y;
+                // zSum += earth.axis.z;
 
-            if (counter >= 100) {
-                zVel += earth.axis.z * 1000.0 * td_sec;
-            } else {
-                counter++;
-            }
+                if (counter >= 100) {
+                    zVel += earth.axis.z * 1000.0 * td_sec;
+                } else {
+                    counter++;
+                }
+            } 
 
             xSum += axVal;
             ySum += ayVal;
@@ -198,41 +257,50 @@ static void stream_data(void *p1, void *p2, void *p3) {
             buf_ptr += 16;
         }
 
-        zVel *= 0.99;
+        // zVel *= 0.99;
 
         float xMean = xSum / (float)fifo_count;
         float yMean = ySum / (float)fifo_count;
         float zMean = zSum / (float)fifo_count;
 
+        if (callibrating) {
+            calSumX += xMean;
+            calSumY += yMean;
+            calSumZ += zMean;
+            calCounter++;
 
-        // printk("%.5f, %.5f, %.5f\n", xMean, yMean, zMean);
+            if (calCounter == BLE_RATE * CAL_TIME_SEC) {
+                struct cal_data_packet cal_data = {
+                    .flags = 1,
+                    .ax = calSumX / (float)calCounter,
+                    .ay = calSumY / (float)calCounter,
+                    .az = calSumZ / (float)calCounter,
+                };
 
-        // q15_t ax_mean, ay_mean, az_mean;
-        q15_t gx_mean, gy_mean, gz_mean;
+                printk("Sending callibration packet\n");
+                printk("x: %.4f, y: %.4f, z: %.4f\n", cal_data.ax, cal_data.ay, cal_data.az);
+                ble_transmit_cb((void*)&cal_data);
+                callibrating = false;
+            }
+            
+        } else {
+            q15_t gx_mean, gy_mean, gz_mean;
 
-        // arm_mean_q15(ax_buf, fifo_count, &ax_mean);
-        // arm_mean_q15(ay_buf, fifo_count, &ay_mean);
-        // arm_mean_q15(az_buf, fifo_count, &az_mean);
+            struct sensor_packet s_pkt = {
+                .v = 1,
+                .flags = 0,
+                .time_stamp_ns = pkt_ts,
+                .temp = pkt_temp,
+                .aX = xMean,
+                .aY = yMean,
+                .aZ = zVel,
+                .gX = gx_mean,
+                .gY = gy_mean,
+                .gZ = gz_mean,
+            };
 
-        // arm_mean_q15(gx_buf, fifo_count, &gx_mean);
-        // arm_mean_q15(gy_buf, fifo_count, &gy_mean);
-        // arm_mean_q15(gz_buf, fifo_count, &gz_mean);
-
-
-        struct sensor_packet s_pkt = {
-            .v = 1,
-            .flags = 0,
-            .time_stamp_ns = pkt_ts,
-            .temp = pkt_temp,
-            .aX = xMean,
-            .aY = yMean,
-            .aZ = zVel,
-            .gX = gx_mean,
-            .gY = gy_mean,
-            .gZ = gz_mean,
-        };
-
-        ble_transmit_cb(&s_pkt);
+            ble_transmit_cb((void*)&s_pkt);
+        }
         
 
         rtio_release_buffer(&stream_ctx, buf, buf_len);
@@ -248,7 +316,7 @@ int imu_init(void (*transmit_cb)(struct sensor_packet*)) {
         return -1;
     }
 
-    struct sensor_value ticks = {.val1 = 512, .val2 = 0};
+    struct sensor_value ticks = {.val1 = TICKS_PER_SEC / BLE_RATE, .val2 = 0};
     ret = sensor_attr_set(imu, SENSOR_CHAN_ALL, SENSOR_ATTR_BATCH_DURATION, &ticks);
 
     if (ret) {

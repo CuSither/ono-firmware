@@ -2,15 +2,19 @@
 
 #define BT_UUID_ONO_SERVICE_VAL     BT_UUID_128_ENCODE(0xc6ce15f6, 0x3fdf, 0x41e9, 0xb143, 0x3e806439085f)
 #define BT_UUID_IMU_CHAR_VAL        BT_UUID_128_ENCODE(0x6d5e350c, 0x3115, 0x4498, 0xae46, 0xd2005911c1a1)
+#define BT_UUID_CAL_CHAR_VAL        BT_UUID_128_ENCODE(0xac65b5bf, 0x3afd, 0x41ae, 0x9ecd, 0x729af13a480c)
 
 #define BT_UUID_ONO                 BT_UUID_DECLARE_128(BT_UUID_ONO_SERVICE_VAL)
 #define BT_UUID_IMU_CHAR            BT_UUID_DECLARE_128(BT_UUID_IMU_CHAR_VAL)
+#define BT_UUID_CAL_CHAR            BT_UUID_DECLARE_128(BT_UUID_CAL_CHAR_VAL)
 
 #define LOG_MODULE_NAME peripheral_imu
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 bool notify_enabled = false;
 struct bt_conn *current_conn = NULL;
+
+void (*cal_cb)(bool containsData, void* buff, uint16_t len);
 
 static struct k_work adv_work;
 
@@ -32,38 +36,93 @@ static void clear_mem_slab() {
     }
 }
 
+static void indicate_cb(struct bt_conn *conn,
+                        struct bt_gatt_indicate_params *params,
+                        uint8_t err)
+{
+    /* Called when client acks (or times out / disconnects). */
+
+    LOG_INF("Received indication cb, err val: %d", err);
+    k_mem_slab_free(&pkt_slab, params->data);
+}
+
+static ssize_t indx_write(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                          const void *buf, uint16_t len, uint16_t offset, uint8_t flags)
+{
+    LOG_INF("Received message from client, len %d", len);
+
+    float* buf_f = (float*)buf;
+    int8_t* buf_b = (int8_t*)buf;
+    
+    if (len < 4) {
+        cal_cb(false, NULL, 0);
+        return len;
+    }
+
+    cal_cb(true, buf, len);
+    
+}
+
+static void send_sensor_packet(const void* p) {
+    if (!notify_enabled) {
+        k_mem_slab_free(&pkt_slab, p);
+        return;
+    }
+
+    static struct bt_gatt_notify_params params;
+
+    memset(&params, 0, sizeof(params));
+    params.attr  = &ono_svc.attrs[IMU_SVC_IDX_MEAS_VAL];
+    params.data  = p;
+    params.len   = PACKET_SIZE;
+    params.func  = notify_done;
+    params.user_data = p;
+
+    int err = bt_gatt_notify_cb(current_conn, &params);
+    if (err) {
+        LOG_INF("Gatt notify failed: %d", err);
+        k_mem_slab_free(&pkt_slab, p);
+    }
+}
+
+static void send_cal_packet(const void *p) {
+    LOG_INF("Transmitting callibration packet");
+    static struct bt_gatt_indicate_params ip; /* lifetime must cover the operation */
+    ip.attr = &ono_svc.attrs[CAL_SVC_IDX_MEAS_VAL];;   /* required: the *value* attribute */
+    ip.func = indicate_cb;       /* confirmation callback */
+    ip.data = p;
+    ip.len  = PACKET_SIZE;
+    int err = bt_gatt_indicate(current_conn, &ip);
+    if (err) {
+        LOG_ERR("Gatt indicate failed: %d", err);
+    }
+}
+
 static void tx_worker(void *d0, void *d1, void *d2) {
     while (1) {
-        if (!current_conn || !notify_enabled) {
+        if (!current_conn) {
             k_msleep(500);
             continue;
         }
+
         void *p;
-        int err = k_msgq_get(&tx_q, &p, K_FOREVER);
+        k_msgq_get(&tx_q, &p, K_FOREVER);
 
-        static struct bt_gatt_notify_params params;
+        uint8_t *p_meta = (uint8_t*)p;
+        uint8_t flags = p_meta[1];
 
-        memset(&params, 0, sizeof(params));
-        params.attr  = &ono_svc.attrs[IMU_SVC_IDX_MEAS_VAL];
-        params.data  = p;
-        params.len   = PACKET_SIZE;
-        params.func  = notify_done;
-        params.user_data = p;
-
-        err = bt_gatt_notify_cb(current_conn, &params);
-        if (err) {
-            LOG_INF("Gatt notify failed: %d", err);
-            k_mem_slab_free(&pkt_slab, p);
+        if (flags & BIT(0)) {
+            send_cal_packet(p);
+        } else {
+            send_sensor_packet(p);
         }
     }
-
-    return;
 }
 
 K_THREAD_DEFINE(bt_worker_tid, 4096, tx_worker, NULL, NULL, NULL, -5, 0, 1000);
 
 void push_packet_to_queue(void* sensor_data) {
-    if (!notify_enabled || !current_conn) return;
+    if (!current_conn) return;
 
     LOG_DBG("num slab allocations: %d", k_mem_slab_num_used_get(&pkt_slab));
 
@@ -85,7 +144,7 @@ void push_packet_to_queue(void* sensor_data) {
 }
 
 static void ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {
-    notify_enabled = (value & BT_GATT_CCC_NOTIFY) != 0;
+    notify_enabled = (value == BT_GATT_CCC_NOTIFY);
 }
 
 BT_GATT_SERVICE_DEFINE(ono_svc,
@@ -94,6 +153,12 @@ BT_GATT_SERVICE_DEFINE(ono_svc,
 			       BT_GATT_PERM_NONE, NULL, NULL, NULL),
 	BT_GATT_CCC(ccc_cfg_changed,
 		    BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+
+    BT_GATT_CHARACTERISTIC(BT_UUID_CAL_CHAR,
+        BT_GATT_CHRC_INDICATE | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+        BT_GATT_PERM_WRITE,
+        NULL, indx_write, NULL),
+    BT_GATT_CCC(ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE) // perhaps this needs its own cc callback
 );
 
 static const struct bt_data ad[] = {
@@ -165,12 +230,14 @@ static void adv_work_handler(struct k_work *work)
 	LOG_INF("Advertising successfully started");
 }
 
-void ble_init() {
+void ble_init(void (*cb)(bool containsData, void* buff, uint16_t len)) {
     int err = bt_enable(NULL);
     if (err) {
         LOG_ERR("bt_enable failed (%d)", err);
         return;
     }
+
+    cal_cb = cb;
 
     k_work_init(&adv_work, adv_work_handler);
     advertising_start();
